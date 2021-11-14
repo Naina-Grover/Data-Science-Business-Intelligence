@@ -1,0 +1,159 @@
+---
+title: "Final Analysis"
+author: "Scott Slutsky"
+date: "5/13/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+train <- read.csv("train_cleaned1.csv")
+test <- read.csv("test_cleaned1.csv")
+```
+
+```{r}
+train <- subset(train, select = -c(1,2,3,4))
+test <- subset(test, select = -c(1,2,3,4))
+```
+
+#Classification Tree
+
+```{r}
+library(rpart)
+library(rpart.plot)
+set.seed(1)
+
+ct_model<-rpart(Satisfied~ .,           
+                data= train,                            
+                method="class",
+                control = rpart.control(cp=0))    
+```
+
+```{r}
+rpart.plot(ct_model)
+```
+
+```{r}
+summary(ct_model)
+```
+
+```{r}
+
+test$ct_pred_prob<-predict(ct_model,test)[,2]
+test$ct_pred_class<-predict(ct_model,test,type="class")
+
+table(test$ct_pred_class,test$Satisfied, dnn=c("predicted","actual"))
+```
+
+
+
+#K fold and tree pruning
+
+```{r}
+
+printcp(ct_model)
+plotcp(ct_model)
+
+
+```
+
+```{r}
+min_xerror<-ct_model$cptable[which.min(ct_model$cptable[,"xerror"]),]
+min_xerror
+
+# prune tree with minimum cp value
+min_xerror_tree<-prune(ct_model, cp=min_xerror[1])
+rpart.plot(min_xerror_tree)
+
+
+
+```
+
+
+```{r}
+bp_tree<-min_xerror_tree
+test$ct_bp_pred_prob<-predict(bp_tree,test)[,2]
+test$ct_bp_pred_class=ifelse(test$ct_bp_pred_prob>0.5,"Yes","No")
+
+table(test$ct_bp_pred_class==test$default)  # error rate
+
+table(test$ct_bp_pred_class,test$Satisfied, dnn=c("predicted","actual"))  # confusion table on test data
+```
+#The min xerror tree is still too complex to view as a manager.
+#Min xerror is 0.095708 at cp 7.4244e-05 
+
+
+```{r}
+trimmed_model<-rpart(Satisfied~ .,           
+                data= train,                            
+                method="class",
+                control = rpart.control(cp=8.3302e-03)) 
+
+test$ct_pred_prob_trim<-predict(trimmed_model,test)[,2]
+test$ct_pred_class_trim<-predict(trimmed_model,test,type="class")
+
+table(test$ct_pred_class_trim,test$Satisfied, dnn=c("predicted","actual"))
+```
+
+```{r}
+rpart.plot(trimmed_model)
+```
+
+
+#Logistic
+```{r}
+logit_model<-glm(Satisfied ~. -Arrival.Delay.in.Minutes, family="binomial",data=train)
+summary(logit_model)
+
+test$logit_pred_prob<-predict(logit_model,test,type="response")
+test$logit_pred_class<-ifelse(test$logit_pred_prob>0.5,"1","0") 
+
+```
+```{r}
+table(test$logit_pred_class,test$Satisfied, dnn=c("predicted","actual"))
+```
+
+
+
+#Step wise regression
+```{r}
+null_model <- glm(Satisfied~1, data = train, family = "binomial")
+
+
+forward_model <- step(null_model, scope = list(lower = null_model, upper = logit_model), direction = "forward")
+summary(forward_model)
+
+backward_model <- step(logit_model, scope = list(lower = null_model, upper = logit_model), direction = "backward")
+summary(backward_model)
+
+```
+
+```{r}
+summary(forward_model)
+```
+```{r}
+summary(backward_model)
+```
+
+#ROC
+```{r}
+library(pROC)
+ct_roc<-roc(test$Satisfied,test$ct_pred_prob_trim,auc=TRUE)
+logit_roc<-roc(test$Satisfied,test$logit_pred_prob,auc=TRUE)
+
+plot(ct_roc,print.auc=TRUE,col="blue")
+plot(logit_roc,print.auc=TRUE,print.auc.y=.3, col="red",add=TRUE)
+
+```
+```{r}
+cor(train)
+```
+
+```{r}
+library(car)
+vif(logit_model)
+```
+
